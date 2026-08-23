@@ -104,6 +104,19 @@ Codex CLI 0.148.0 supports these (from `codex login --help`):
 | `OPENAI_API_KEY` env var | Yes | set it in hPanel |
 | ChatGPT browser OAuth | **No** - needs a local browser + loopback callback | `codex login` |
 
+### Prerequisite: enable device code authorization (one time)
+
+Device-code sign-in is an **account-level opt-in that is OFF by default** - OpenAI
+gates it because device codes are a phishing target. Until you enable it, the CLI
+returns:
+
+> Enable device code authorization for Codex in ChatGPT Security Settings, then run
+> `codex login --device-auth` again.
+
+Fix it once, in ChatGPT: **Settings -> Security -> device code authorization**. That
+covers every machine, including the Hostinger server. The UI detects this specific
+failure and shows the steps inline.
+
 ### Sign in from the browser (no SSH needed)
 
 The UI has a **Sign in with ChatGPT** button, which appears whenever the CLI is

@@ -34,6 +34,32 @@ function parseDeviceOutput(text) {
   return { url, code };
 }
 
+/**
+ * Turn raw CLI output into something a human can act on.
+ * Device-code auth is an account-level opt-in that is OFF by default, so this
+ * is the single most likely first-run failure.
+ */
+function friendlyError(raw) {
+  const t = String(raw || '');
+  if (/device code authorization/i.test(t)) {
+    return {
+      message: 'Device code sign-in is disabled on your ChatGPT account. '
+        + 'Open ChatGPT then Settings then Security, enable device code authorization, and try again.',
+      action: 'ENABLE_DEVICE_CODE',
+    };
+  }
+  if (/rate.?limit|too many/i.test(t)) {
+    return { message: 'OpenAI rate-limited the sign-in attempt. Wait a minute and retry.', action: null };
+  }
+  if (/network|dns|connect|timed? out/i.test(t)) {
+    return {
+      message: 'Could not reach OpenAI from this server. Outbound HTTPS may be blocked by the host firewall.',
+      action: 'NETWORK',
+    };
+  }
+  return { message: t.trim().slice(-300) || 'Sign-in failed.', action: null };
+}
+
 function publicState() {
   if (!session) return { state: 'IDLE' };
   return {
@@ -43,6 +69,7 @@ function publicState() {
     startedAt: session.startedAt,
     expiresAt: session.expiresAt,
     error: session.error || null,
+    action: session.action || null,
   };
 }
 
@@ -131,9 +158,12 @@ function startLogin() {
         session.state = 'SUCCESS';
       } else if (session.state === 'PENDING') {
         session.state = 'FAILED';
-        // Never surface raw CLI output verbatim - it is redacted first.
-        session.error = codex._internal.redact(stripAnsi(session.buf)).trim().slice(-300)
-          || ('Login exited with code ' + exitCode + '.');
+        // Never surface raw CLI output verbatim - it is redacted first, then
+        // mapped to actionable guidance where we recognise the cause.
+        const safe = codex._internal.redact(stripAnsi(session.buf));
+        const friendly = friendlyError(safe);
+        session.error = friendly.message || ('Login exited with code ' + exitCode + '.');
+        session.action = friendly.action;
       }
       session.child = null;
       settle();
@@ -177,4 +207,4 @@ async function getLoginState() {
   return s;
 }
 
-module.exports = { startLogin, getLoginState, cancelLogin, parseDeviceOutput };
+module.exports = { startLogin, getLoginState, cancelLogin, parseDeviceOutput, friendlyError };

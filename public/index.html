@@ -392,6 +392,31 @@
     $('loginPoll').textContent = 'Waiting for approval…';
   }
 
+  // Render a failure with actionable guidance instead of raw CLI output.
+  function showLoginError(d) {
+    $('loginPanel').classList.remove('hidden');
+    var box = $('loginPoll');
+    box.textContent = d.error || ('Sign-in ' + String(d.state || '').toLowerCase() + '.');
+    var prev = document.getElementById('loginFix');
+    if (prev) prev.remove();
+    if (d.action === 'ENABLE_DEVICE_CODE') {
+      var el = document.createElement('div');
+      el.id = 'loginFix';
+      el.className = 'warnbox';
+      el.innerHTML =
+        '<strong>One setting to change:</strong><br>' +
+        '1. Open <a href="https://chatgpt.com" target="_blank" rel="noopener noreferrer">chatgpt.com</a> ' +
+        'and go to <strong>Settings &rarr; Security</strong>.<br>' +
+        '2. Enable <strong>device code authorization</strong>.<br>' +
+        '3. Come back and click <strong>Sign in with ChatGPT</strong> again.<br><br>' +
+        'It is off by default because device codes are a phishing target. ' +
+        'Enabling it once covers this server too.';
+      box.parentNode.appendChild(el);
+    }
+    $('loginBtn').disabled = false;
+    $('loginBtn').textContent = 'Sign in with ChatGPT';
+  }
+
   function beginPoll() {
     stopPoll();
     var started = Date.now();
@@ -405,7 +430,7 @@
           refreshStatus();
         } else if (d.state === 'EXPIRED' || d.state === 'FAILED' || d.state === 'ERROR' || d.state === 'CANCELLED') {
           stopPoll();
-          $('loginPoll').textContent = 'Sign-in ' + d.state.toLowerCase() + (d.error ? ': ' + d.error : '') + '.';
+          showLoginError(d);
           $('loginBtn').disabled = false;
           $('loginBtn').textContent = 'Sign in with ChatGPT';
         } else {
@@ -429,8 +454,7 @@
       } else if (d.state === 'SUCCESS') {
         refreshStatus();
       } else {
-        $('loginPanel').classList.remove('hidden');
-        $('loginPoll').textContent = d.error || 'Could not start the sign-in flow.';
+        showLoginError(d);
       }
     }).catch(function () {
       $('loginBtn').disabled = false;
