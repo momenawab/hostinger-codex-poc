@@ -1,0 +1,7 @@
+node_modules/
+.env
+*.log
+env-report.json
+# Codex credentials must never enter git.
+auth.json
+.codex/
