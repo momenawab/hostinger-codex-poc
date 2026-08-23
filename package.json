@@ -8,9 +8,15 @@
     "start": "node server.js",
     "inspect": "node scripts/inspect-env.js",
     "probe": "node scripts/probe-child.js",
-    "codex:status": "node scripts/codex-check.js"
+    "codex:status": "node scripts/codex-check.js",
+    "dev": "POC_TOKEN=localtest PORT=3000 node server.js",
+    "dev:fresh": "POC_TOKEN=localtest PORT=3000 CODEX_HOME=./.codex-test node server.js",
+    "dev:reset": "rm -rf ./.codex-test && echo 'fresh-login state cleared'",
+    "diagnose": "node scripts/diagnose-exec.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "express": "^4.21.2"
   },
