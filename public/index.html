@@ -86,6 +86,27 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .note { font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--border); padding-left: 10px; }
+  .hidden { display: none !important; }
+  .code-box {
+    font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: .12em;
+    padding: 14px 18px; background: var(--user-bg); border: 1px dashed var(--accent);
+    border-radius: var(--radius); text-align: center; margin: 10px 0; user-select: all;
+  }
+  .step { display: flex; gap: 10px; margin: 10px 0; align-items: flex-start; }
+  .step .n {
+    flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+    color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+  }
+  .step a { color: var(--accent); word-break: break-all; }
+  .warnbox {
+    background: var(--warn-bg); color: var(--warn-fg); padding: 10px 12px;
+    border-radius: 8px; font-size: 12.5px; margin-top: 10px;
+  }
+  pre.diag {
+    background: var(--user-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: 11.5px;
+    max-height: 340px; overflow-y: auto; white-space: pre;
+  }
 </style>
 </head>
 <body>
@@ -112,6 +133,43 @@
     </div>
     <div class="detail" id="statusDetail">Waiting for the access token.</div>
     <div class="meta" id="statusMeta"></div>
+
+    <div class="controls" id="authActions" style="margin-top:14px">
+      <button id="loginBtn" class="hidden">Sign in with ChatGPT</button>
+      <button class="secondary hidden" id="diagBtn">Diagnose</button>
+    </div>
+
+    <!-- Device-code sign-in -->
+    <div id="loginPanel" class="hidden" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border)">
+      <div class="step"><span class="n">1</span>
+        <div>Open this link on any device where you can sign in to ChatGPT:<br>
+          <a id="loginUrl" href="#" target="_blank" rel="noopener noreferrer">&hellip;</a>
+        </div>
+      </div>
+      <div class="step"><span class="n">2</span>
+        <div style="flex:1">Enter this one-time code (expires in 15 minutes):
+          <div class="code-box" id="loginCode">&hellip;</div>
+        </div>
+      </div>
+      <div class="step"><span class="n">3</span>
+        <div>Approve the sign-in. This page detects it automatically.
+          <div class="meta" id="loginPoll">Waiting for approval&hellip;</div>
+        </div>
+      </div>
+      <div class="warnbox">
+        Only continue if <strong>you</strong> started this sign-in from this page. If someone
+        sent you this code, cancel &mdash; entering it would link <em>your</em> ChatGPT account to
+        <em>their</em> server.
+      </div>
+      <div class="controls">
+        <button class="secondary" id="loginCancel">Cancel</button>
+        <span class="hint" id="loginHint"></span>
+      </div>
+    </div>
+
+    <div id="diagPanel" class="hidden" style="margin-top:14px">
+      <pre class="diag" id="diagOut">&hellip;</pre>
+    </div>
   </div>
 
   <!-- Chat -->
@@ -222,13 +280,18 @@
       if (d.version) meta.push(d.version);
       if (d.authMethod) meta.push('auth: ' + d.authMethod);
 
+      // Sign-in is only meaningful when the CLI runs but has no credentials.
+      $('loginBtn').classList.toggle('hidden', d.status !== 'NOT_AUTHENTICATED');
+      $('diagBtn').classList.toggle('hidden', d.status === 'AUTHENTICATED');
       if (d.status === 'AUTHENTICATED') {
+        $('loginPanel').classList.add('hidden');
+        stopPoll();
         setStatus('ok', 'Codex: Authenticated', d.detail || '', meta.join('  ·  '));
         setChatEnabled(true);
       } else if (d.status === 'NOT_AUTHENTICATED') {
         setStatus('warn', 'Codex: Not Authenticated',
           (d.detail || '') + ' Codex CLI is installed, but no credentials are stored on this server. ' +
-          'Log in on the server with `codex login --with-api-key` or `codex login --device-auth`.',
+          'Use the “Sign in with ChatGPT” button below - no SSH required.',
           meta.join('  ·  '));
         setChatEnabled(false);
       } else if (d.status === 'CLI_NOT_AVAILABLE') {
@@ -313,6 +376,88 @@
   });
   $('input').addEventListener('keydown', function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
+  });
+
+  /* ---------------- ChatGPT device-code sign-in ---------------- */
+
+  var pollTimer = null;
+  function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+  function showLoginPanel(d) {
+    $('loginPanel').classList.remove('hidden');
+    $('loginUrl').textContent = d.url;
+    $('loginUrl').href = d.url;
+    $('loginCode').textContent = d.code;
+    $('loginHint').textContent = '';
+    $('loginPoll').textContent = 'Waiting for approval…';
+  }
+
+  function beginPoll() {
+    stopPoll();
+    var started = Date.now();
+    pollTimer = setInterval(function () {
+      api('/api/codex/login/status').then(function (r) {
+        var d = r.data || {};
+        if (d.state === 'SUCCESS') {
+          stopPoll();
+          $('loginPanel').classList.add('hidden');
+          $('loginBtn').classList.add('hidden');
+          refreshStatus();
+        } else if (d.state === 'EXPIRED' || d.state === 'FAILED' || d.state === 'ERROR' || d.state === 'CANCELLED') {
+          stopPoll();
+          $('loginPoll').textContent = 'Sign-in ' + d.state.toLowerCase() + (d.error ? ': ' + d.error : '') + '.';
+          $('loginBtn').disabled = false;
+          $('loginBtn').textContent = 'Sign in with ChatGPT';
+        } else {
+          var secs = Math.round((Date.now() - started) / 1000);
+          $('loginPoll').textContent = 'Waiting for approval… ' + secs + 's';
+        }
+      });
+    }, 3000);
+  }
+
+  $('loginBtn').addEventListener('click', function () {
+    $('loginBtn').disabled = true;
+    $('loginBtn').innerHTML = '<span class="spinner"></span> Starting…';
+    api('/api/codex/login/start', { method: 'POST', body: {} }).then(function (r) {
+      var d = r.data || {};
+      $('loginBtn').disabled = false;
+      $('loginBtn').textContent = 'Sign in with ChatGPT';
+      if (d.state === 'PENDING' && d.url && d.code) {
+        showLoginPanel(d);
+        beginPoll();
+      } else if (d.state === 'SUCCESS') {
+        refreshStatus();
+      } else {
+        $('loginPanel').classList.remove('hidden');
+        $('loginPoll').textContent = d.error || 'Could not start the sign-in flow.';
+      }
+    }).catch(function () {
+      $('loginBtn').disabled = false;
+      $('loginBtn').textContent = 'Sign in with ChatGPT';
+    });
+  });
+
+  $('loginCancel').addEventListener('click', function () {
+    stopPoll();
+    api('/api/codex/login/cancel', { method: 'POST', body: {} }).then(function () {
+      $('loginPanel').classList.add('hidden');
+    });
+  });
+
+  /* ---------------- Diagnostics ---------------- */
+
+  $('diagBtn').addEventListener('click', function () {
+    var panel = $('diagPanel');
+    panel.classList.remove('hidden');
+    $('diagOut').textContent = 'Running diagnosis…';
+    api('/api/diagnose').then(function (r) {
+      var d = r.data || {};
+      var head = 'CONCLUSION: ' + (d.conclusion || '?') + '\nREMEDY: ' + (d.remedy || '?') + '\n\n';
+      $('diagOut').textContent = head + JSON.stringify(d, null, 2);
+    }).catch(function () {
+      $('diagOut').textContent = 'Diagnosis request failed.';
+    });
   });
 
   // Auto-unlock if a token is already in this tab's sessionStorage.

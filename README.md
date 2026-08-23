@@ -31,6 +31,10 @@ wired into any other project.
 | `GET` | `/api/codex/status` | Real `codex login status` check |
 | `POST` | `/api/chat` | `{ "message": "..." }` |
 | `POST` | `/test-codex` | `{ "prompt": "..." }` |
+| `POST` | `/api/codex/login/start` | Begin browser ChatGPT sign-in; returns URL + device code |
+| `GET` | `/api/codex/login/status` | Poll until the user approves |
+| `POST` | `/api/codex/login/cancel` | Abort an in-flight sign-in |
+| `GET` | `/api/diagnose` | Why won't Codex execute? Paths + permission bits only |
 | `GET` | `/api/env` | Env report; variable **names only** |
 | `GET` | `/healthz` | Liveness, unauthenticated |
 
@@ -100,9 +104,25 @@ Codex CLI 0.148.0 supports these (from `codex login --help`):
 | `OPENAI_API_KEY` env var | Yes | set it in hPanel |
 | ChatGPT browser OAuth | **No** - needs a local browser + loopback callback | `codex login` |
 
-### Using your ChatGPT/Codex subscription (no API key)
+### Sign in from the browser (no SSH needed)
 
-`codex login --device-auth` is the supported headless path. Over SSH on the server:
+The UI has a **Sign in with ChatGPT** button, which appears whenever the CLI is
+installed but has no credentials. It drives the same official device-code flow:
+
+1. Click it. The server runs `codex login --device-auth`.
+2. The page shows a URL and a one-time code (valid 15 minutes).
+3. Open that URL on any device, sign in with your own ChatGPT account, enter the code.
+4. The page polls and flips to **Codex: Authenticated** on its own.
+
+Only a public URL and a short-lived device code ever reach the browser. The
+credential is written by the Codex CLI into `$CODEX_HOME` and is never read,
+logged, or returned by this app. You are never asked for your password.
+
+> **Anti-phishing:** only enter a code you started from your own admin page. A code
+> someone sends you would link *your* ChatGPT account to *their* server. The UI
+> repeats this warning inline.
+
+### Same flow over SSH, if you prefer
 
 ```bash
 cd ~/codex-poc
@@ -158,6 +178,38 @@ tool is what actually contains it, which is why that is the default here. Settin
 `CODEX_ALLOW_SHELL=1` gives up that guarantee.
 
 ---
+
+## Troubleshooting
+
+### `Codex binary could not be executed (EACCES)`
+
+The binary installed but will not run. Hit **Diagnose** in the UI (or run
+`node scripts/diagnose-exec.js`) - it distinguishes the four causes:
+
+| Conclusion | Meaning | Fix |
+|---|---|---|
+| `WORKING` | Exec bit was missing; it has been repaired | Restart the app |
+| `BINARY_NOT_INSTALLED` | Platform package absent | `npm install --include=optional @openai/codex` |
+| `WRONG_ARCHITECTURE` | Binary built for another OS/CPU | Delete `node_modules`, reinstall **on the server** |
+| `NOEXEC_APP_DIR` | App dir mounted `noexec` | Copy the binary somewhere executable, set `CODEX_BIN` |
+| `NOEXEC_EVERYWHERE` | Account may not execute binaries at all | Codex CLI cannot work here; use the OpenAI HTTP API |
+
+The app now prefers running the launcher through `node` rather than relying on
+the shim's executable bit, and re-applies `chmod +x` to the native binary at
+startup - which resolves the common case automatically.
+
+### `noexec` workaround
+
+If only the app directory is `noexec`, copy the binary somewhere that is not:
+
+```bash
+mkdir -p ~/bin
+cp node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex ~/bin/codex
+chmod +x ~/bin/codex
+~/bin/codex --version          # confirm before relying on it
+```
+
+Then set `CODEX_BIN=/home/<user>/bin/codex` in hPanel and restart.
 
 ## Known limitations
 

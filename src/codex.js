@@ -46,28 +46,72 @@ const CONFIG = {
 
 let cachedBin;
 
+/** Every native binary location the platform packages might ship. */
+function nativeBinaryCandidates() {
+  const root = path.join(__dirname, '..', 'node_modules', '@openai');
+  const triples = [
+    'x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl',
+    'x86_64-apple-darwin', 'aarch64-apple-darwin',
+  ];
+  const pkgs = ['codex-linux-x64', 'codex-linux-arm64', 'codex-darwin-x64', 'codex-darwin-arm64', 'codex'];
+  const out = [];
+  for (const pkg of pkgs) {
+    for (const t of triples) out.push(path.join(root, pkg, 'vendor', t, 'bin', 'codex'));
+  }
+  return out;
+}
+
+/**
+ * Restore the executable bit on the native binary.
+ *
+ * npm normally sets it, but an extracted/restored tree can lose it and the
+ * result is a confusing EACCES at spawn time. Cheap to re-apply, so we do it
+ * before anything tries to run Codex.
+ */
+function ensureNativeExecutable() {
+  for (const p of nativeBinaryCandidates()) {
+    let st;
+    try { st = fs.statSync(p); } catch (_) { continue; }
+    const mode = st.mode & 0o777;
+    if (mode & 0o111) return { path: p, fixed: false, mode: mode.toString(8) };
+    try {
+      fs.chmodSync(p, 0o755);
+      return { path: p, fixed: true, mode: (fs.statSync(p).mode & 0o777).toString(8) };
+    } catch (e) {
+      return { path: p, fixed: false, mode: mode.toString(8), error: e.code || e.message };
+    }
+  }
+  return null;
+}
+
 function candidateBins() {
   const exe = process.platform === 'win32' ? '.cmd' : '';
   const out = [];
-  if (process.env.CODEX_BIN) out.push(process.env.CODEX_BIN);
-  // Preferred: project-local install (no global install needed on Hostinger).
-  out.push(path.join(__dirname, '..', 'node_modules', '.bin', 'codex' + exe));
-  // The launcher shim inside the package, run via node directly.
-  out.push(path.join(__dirname, '..', 'node_modules', '@openai', 'codex', 'bin', 'codex.js'));
+  if (process.env.CODEX_BIN) out.push({ cmd: process.env.CODEX_BIN, prefix: [], probe: process.env.CODEX_BIN });
+
+  // PREFERRED: run the JS launcher through node. This needs NO executable bit
+  // on the shim itself, which is exactly what fails (EACCES) on hosts that
+  // strip the bit or mount the app directory noexec.
+  const shim = path.join(__dirname, '..', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  out.push({ cmd: process.execPath, prefix: [shim], probe: shim });
+
+  // Fallback: the .bin shim, which DOES require the executable bit.
+  const dotbin = path.join(__dirname, '..', 'node_modules', '.bin', 'codex' + exe);
+  out.push({ cmd: dotbin, prefix: [], probe: dotbin });
+
   return out;
 }
 
 function resolveCodexBin() {
   if (cachedBin !== undefined) return cachedBin;
+  ensureNativeExecutable();
+
   for (const c of candidateBins()) {
     try {
-      if (fs.existsSync(c)) {
-        cachedBin = c.endsWith('.js') ? { cmd: process.execPath, prefix: [c] } : { cmd: c, prefix: [] };
-        return cachedBin;
-      }
+      if (fs.existsSync(c.probe)) { cachedBin = { cmd: c.cmd, prefix: c.prefix }; return cachedBin; }
     } catch (_) { /* keep looking */ }
   }
-  // Last resort: rely on PATH (works if globally installed).
+
   const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['codex'], {
     encoding: 'utf8', timeout: 5000, shell: false,
   });
@@ -78,6 +122,8 @@ function resolveCodexBin() {
   cachedBin = null;
   return cachedBin;
 }
+
+function resetBinCache() { cachedBin = undefined; }
 
 /* ------------------------------------------------------------------ *
  * Scratch sandbox directory
@@ -497,5 +543,9 @@ module.exports = {
   runPrompt,
   getScratchDir,
   resolveCodexBin,
+  resetBinCache,
+  ensureNativeExecutable,
+  nativeBinaryCandidates,
+  buildChildEnv,
   _internal: { extractFinalMessage, redact },
 };

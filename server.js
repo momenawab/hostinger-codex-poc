@@ -21,6 +21,8 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const codex = require('./src/codex');
+const { diagnose } = require('./src/diagnose');
+const login = require('./src/login');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -145,6 +147,45 @@ app.post('/test-codex', requireToken, rateLimit, async (req, res) => {
   const result = await codex.runPrompt(prompt);
   if (!result.success) return res.status(502).json(result);
   return res.json({ success: true, response: result.response });
+});
+
+/* ---- Browser-driven ChatGPT sign-in (device code flow) ---- */
+
+// Starts the flow and returns ONLY a public URL + a short-lived device code.
+app.post('/api/codex/login/start', requireToken, rateLimit, async (req, res) => {
+  try {
+    const s = await login.startLogin();
+    res.json(s);
+  } catch (e) {
+    res.status(500).json({ state: 'ERROR', error: 'Could not start the login flow.' });
+  }
+});
+
+// Polled by the UI until the user approves on their own device.
+app.get('/api/codex/login/status', requireToken, async (req, res) => {
+  try {
+    res.json(await login.getLoginState());
+  } catch (e) {
+    res.status(500).json({ state: 'ERROR', error: 'Could not read login state.' });
+  }
+});
+
+app.post('/api/codex/login/cancel', requireToken, rateLimit, (req, res) => {
+  try {
+    res.json(login.cancelLogin());
+  } catch (e) {
+    res.status(500).json({ state: 'ERROR', error: 'Could not cancel the login flow.' });
+  }
+});
+
+// Deep diagnosis of why Codex will not execute. Paths and permission bits only.
+app.get('/api/diagnose', requireToken, rateLimit, (req, res) => {
+  try {
+    codex.resetBinCache();          // re-resolve after any chmod repair
+    res.json(diagnose());
+  } catch (e) {
+    res.status(500).json({ conclusion: 'ERROR', remedy: 'Diagnostic failed: ' + (e && e.message) });
+  }
 });
 
 // Environment report - variable NAMES only, never values.
