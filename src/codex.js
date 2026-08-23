@@ -263,6 +263,26 @@ function runProcess({ args, stdin, timeoutMs, cwd }) {
   });
 }
 
+
+/**
+ * Absolute, guaranteed-to-exist CODEX_HOME.
+ *
+ * Two things bite here:
+ *  1. A relative CODEX_HOME would resolve against the CHILD's cwd (the scratch
+ *     dir), not the app directory - so we resolve it against the app root.
+ *  2. Codex refuses to start when CODEX_HOME does not exist, and on a freshly
+ *     provisioned server ~/.codex never exists yet. So we create it.
+ */
+let resolvedCodexHome;
+function getCodexHome() {
+  if (resolvedCodexHome) return resolvedCodexHome;
+  const raw = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const abs = path.isAbsolute(raw) ? raw : path.resolve(__dirname, '..', raw);
+  try { fs.mkdirSync(abs, { recursive: true }); } catch (_) { /* surfaced later by the CLI */ }
+  resolvedCodexHome = abs;
+  return abs;
+}
+
 /**
  * Environment handed to the Codex child.
  * We pass through only what the CLI needs. Credentials are NOT constructed or
@@ -276,7 +296,7 @@ function buildChildEnv() {
     TMPDIR: process.env.TMPDIR,
     LANG: process.env.LANG || 'C.UTF-8',
     // Keep Codex's own state/auth location explicit and stable.
-    CODEX_HOME: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+    CODEX_HOME: getCodexHome(),
     // Non-interactive hints.
     CI: '1',
     NO_COLOR: '1',
@@ -542,6 +562,7 @@ module.exports = {
   checkStatus,
   runPrompt,
   getScratchDir,
+  getCodexHome,
   resolveCodexBin,
   resetBinCache,
   ensureNativeExecutable,
